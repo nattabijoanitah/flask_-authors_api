@@ -2,26 +2,32 @@
 from app.extensions import db
 from datetime import datetime
 
+
 class Book(db.Model):
     __tablename__ = "books"
-    id = db.Column(db.Integer, primary_key=True)    
+
+    id = db.Column(db.Integer, primary_key=True)
+
     title = db.Column(db.String(150), nullable=False)
     pages = db.Column(db.Integer, nullable=False)
     price = db.Column(db.Integer, nullable=False)
-    price_unit = db.Column(db.String(50), nullable=False , default="UGX")
+    price_unit = db.Column(db.String(50), nullable=False, default="UGX")
+
     publication_date = db.Column(db.Date, nullable=False)
+
     isbn = db.Column(db.String(30), unique=True, nullable=True)
     genre = db.Column(db.String(50), nullable=False)
     description = db.Column(db.String(255), nullable=False)
     image = db.Column(db.String(255), nullable=True)
+
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False)
+
     user = db.relationship("User", backref="books")
     company = db.relationship("Company", backref="books")
-    created_at = db.Column(db.DateTime, default=datetime.now())
-    updated_at = db.Column(db.DateTime, default=datetime.now())
 
-
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 
