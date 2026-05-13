@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from validators import email
+import validators
 from app.controllers.books.book_controller import HTTP_403_FORBIDDEN, HTTP_404_NOT_FOUND
 from app.controllers.companies.company_controller import HTTP_200_OK, HTTP_400_BAD_REQUEST, HTTP_409_CONFLICT, HTTP_500_INTERNAL_SERVER_ERROR
 from app.models.users import User
@@ -9,13 +9,15 @@ from flask_jwt_extended import (
 )
 from app.extensions import db, bcrypt
 
+# User Blueprint
 users = Blueprint('users', __name__, url_prefix='/api/v1/users')
 
 
 # ========================
-# GET ALL USERS
+# GET ALL USERS FROM THE DATABASE
 # ========================
 @users.get('/')
+@jwt_required()
 def getAllUsers():
 
     try:
@@ -49,13 +51,14 @@ def getAllUsers():
         return jsonify({
             "status": "error",
             "message": str(e)
-        }), 500
+        }), HTTP_500_INTERNAL_SERVER_ERROR  
 
 
 # ========================
 # GET ALL AUTHORS
 # ========================
 @users.get('/authors')
+@jwt_required()
 def getAllAuthors():
 
     try:
@@ -133,13 +136,14 @@ def getAllAuthors():
         return jsonify({
             "status": "error",
             "message": str(e)
-        }), 500
+        }), HTTP_500_INTERNAL_SERVER_ERROR
 
 
 # ========================
 # GET USER BY ID
 # ========================
 @users.get('/<int:id>')
+@jwt_required() 
 def getUserById(id):
 
     try:
@@ -227,53 +231,103 @@ def getUserById(id):
 # ========================
 # UPDATE USER DETAILS
 # ========================
+
 @users.route('/<int:user_id>', methods=['PUT', 'PATCH'])
 @jwt_required()
 def updateUser(user_id):
 
+
     try:
+
+        current_user = int(get_jwt_identity())
+
         data = request.get_json() or {}
 
         user = User.query.filter_by(id=user_id).first()
-        if not user:
-            return jsonify({"message": "User not found"}), HTTP_404_NOT_FOUND
 
-        current_user = int(get_jwt_identity())
+        if not user:
+            return jsonify({
+                "error": "User not found"
+            }), HTTP_404_NOT_FOUND
+
         logged_in_user = User.query.filter_by(id=current_user).first()
 
         if not logged_in_user:
-            return jsonify({"error": "User not found"}), HTTP_404_NOT_FOUND
+            return jsonify({
+                "error": "Logged in user not found"
+            }), HTTP_404_NOT_FOUND
+        user = User.query.filter_by(id=user_id).first()
+        if not user:
+            return jsonify({
+                "error": "User not found"
+            }), HTTP_404_NOT_FOUND
 
-        # ========================
-        # AUTHORIZATION (VERY IMPORTANT)
-        # ========================
-        if logged_in_user.user_type != "admin" and current_user != user_id:
-            return jsonify({"error": "Not authorized to update this user"}), HTTP_403_FORBIDDEN
+        # authorization
+        if logged_in_user.user_type != "admin" and user.id != current_user:
+            return jsonify({
+                "error": "You are not authorized to update user details"
+            }), HTTP_403_FORBIDDEN
+        if 'password' in data:
+            new_password = data['password']
 
-        # ========================
-        # DUPLICATE EMAIL CHECK
-        # ========================
+            if len(new_password) < 6:
+                return jsonify({
+                    "error": "Password must be at least 6 characters long"
+                }), HTTP_400_BAD_REQUEST
+
+            hashed_password = bcrypt.generate_password_hash(data['password']).decode('utf-8')
+            user.password = hashed_password
+
+        # check duplicate email
         new_email = data.get("email")
 
         if new_email and new_email != user.email:
-            existing_user = User.query.filter_by(email=new_email).first()
-            if existing_user:
-                return jsonify({"error": "Email already in use"}), HTTP_409_CONFLICT
 
-        # ========================
-        # UPDATE FIELDS
-        # ========================
-        user.first_name = data.get("first_name", user.first_name)
-        user.last_name = data.get("last_name", user.last_name)
-        user.email = data.get("email", user.email)
-        user.contact = data.get("contact", user.contact)
-        user.biography = data.get("biography", user.biography)
-        user.image = data.get("image", user.image)
-    
+            existing_user = User.query.filter_by(email=new_email).first()
+
+            if existing_user:
+                return jsonify({
+                    "error": "Email already in use"
+                }), HTTP_409_CONFLICT
+            db.session.commit()
+            user_name = user.get_full_name() 
+
+        # update fields
+        user.first_name = data.get("first_name",
+            user.first_name
+        )
+
+        user.last_name = data.get(
+            "last_name",
+            user.last_name
+        )
+
+        user.email = data.get(
+            "email",
+            user.email
+        )
+
+        user.contact = data.get(
+            "contact",
+            user.contact
+        )
+
+        user.biography = data.get(
+            "biography",
+            user.biography
+        )
+
+        user.image = data.get(
+            "image",
+            user.image
+        )
+
         db.session.commit()
 
         return jsonify({
+
             "message": "User updated successfully",
+
             "user": {
                 "id": user.id,
                 "first_name": user.first_name,
@@ -284,45 +338,74 @@ def updateUser(user_id):
                 "image": user.image,
                 "user_type": user.user_type
             }
+
         }), HTTP_200_OK
 
     except Exception as e:
-        db.session.rollback()
-        return jsonify({"error": str(e)}), HTTP_500_INTERNAL_SERVER_ERROR
 
-    # DELETE USER
-@users.route('/<int:user_id>', methods=['DELETE'])
+        db.session.rollback()
+
+        return jsonify({
+            "error": str(e)
+        }), HTTP_500_INTERNAL_SERVER_ERROR
+
+   # ========================
+# DELETE USER
+# ========================
+@users.route('/delete/<int:user_id>', methods=['DELETE'])
 @jwt_required()
 def deleteUser(user_id):
 
     try:
+        # find user
         user = User.query.filter_by(id=user_id).first()
 
+        # get logged in user id
+        current_user_id = int(get_jwt_identity())
+        
         if not user:
-            return jsonify({"message": "User not found"}), HTTP_404_NOT_FOUND
+            return jsonify({
+                "message": "User not found"
+            }), HTTP_404_NOT_FOUND
 
         current_user = int(get_jwt_identity())
         logged_in_user = User.query.filter_by(id=current_user).first()
 
+
         if not logged_in_user:
-            return jsonify({"error": "User not found"}), HTTP_404_NOT_FOUND
+            return jsonify({
+                "error": "Logged in user not found"
+            }), HTTP_404_NOT_FOUND
+        
+        if logged_in_user.user_type != "admin" and user.id != current_user:
+            return jsonify({
+                "error": "You are not authorized to delete this user"
+            }), HTTP_403_FORBIDDEN
+        # # check authorization
+        # if current_user != user_id:
+        #     return jsonify({
+        #         "message": "You are not authorized to delete this user"
+        #     }), HTTP_403_FORBIDDEN
 
-        # AUTHORIZATION
-        if logged_in_user.user_type != "admin" and current_user != user_id:
-            return jsonify({"error": "Not authorized to delete this user"}), HTTP_403_FORBIDDEN
+        from app.models.companies import Company
+        Company.query.filter_by(user_id=user_id).delete()
+        from app.models.books import Book
+        Book.query.filter_by(user_id=user_id).delete()
 
+
+        # delete user
         db.session.delete(user)
         db.session.commit()
 
         return jsonify({
-            "message": "User deleted successfully"
+        "message": f"User {user.first_name} {user.last_name} deleted successfully"
         }), HTTP_200_OK
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": str(e)}), HTTP_500_INTERNAL_SERVER_ERROR
-    
-
+        return jsonify({
+            "error": str(e)
+        }), HTTP_500_INTERNAL_SERVER_ERROR
     # SEARCH FOR AN AUTHOR
 # SEARCH FOR AN AUTHOR
 @users.get('/search')
@@ -374,3 +457,4 @@ def searchForAuthor():
         return jsonify({
             "error": str(e)
         }), HTTP_500_INTERNAL_SERVER_ERROR
+    

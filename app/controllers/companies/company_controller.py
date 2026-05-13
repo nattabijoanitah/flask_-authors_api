@@ -174,8 +174,6 @@ def getCompanyById(company_id):
         }), HTTP_200_OK
     except Exception as e:
         return jsonify({"error": str(e)}), HTTP_500_INTERNAL_SERVER_ERROR
-    
-
 # UPDATING A COMPANY
 @companies.route('/<int:company_id>', methods=['PUT', 'PATCH'])
 @jwt_required()
@@ -189,11 +187,15 @@ def updateCompany(company_id):
         if not company:
             return jsonify({"message": "Company not found"}), HTTP_404_NOT_FOUND
 
-        # AUTH CHECK
-        if company.user_id != get_jwt_identity():
-            return jsonify({"message": "Unauthorized to update this company"}), HTTP_401_UNAUTHORIZED
+        # FIXED AUTH CHECK
+        current_user_id = int(get_jwt_identity())
 
-        # UPDATE REAL MODEL FIELDS
+        if company.user_id != current_user_id:
+            return jsonify({
+                "message": "Unauthorized to update this company"
+            }), HTTP_401_UNAUTHORIZED
+
+        # UPDATE FIELDS
         company.name = data.get('name', company.name)
         company.origin = data.get('origin', company.origin)
         company.description = data.get('description', company.description)
@@ -221,14 +223,15 @@ def updateCompany(company_id):
 def deleteCompany(company_id):
 
     try:
-        current_user  = get_jwt_identity()
+        current_user_id = int(get_jwt_identity())
+        user = User.query.get(current_user_id)
         company = Company.query.filter_by(id=company_id).first()
 
-        if not company:
-            return jsonify({"message": "Company not found"}), HTTP_404_NOT_FOUND
+        if not user:
+            return jsonify({"message": "User not found"}), HTTP_404_NOT_FOUND
 
         # AUTHORISATION  CHECK
-        if company.user_id != current_user:
+        if user.user_type != "admin" and user.id != current_user_id:
             return jsonify({"message": "Unauthorized to delete this company"}), HTTP_401_UNAUTHORIZED
         
         # DELETE ASSOCIATED BOOKS FIRST (CASCADE DELETE)
@@ -247,3 +250,4 @@ def deleteCompany(company_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), HTTP_500_INTERNAL_SERVER_ERROR
+    
